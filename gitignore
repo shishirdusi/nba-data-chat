@@ -1,0 +1,8 @@
+nba.sqlite
+audit_log.jsonl
+__pycache__/
+*.pyc
+.env
+mock_nba.sqlite
+archive.zip
+.DS_Store

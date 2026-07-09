@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chat with your NBA data</title>
+<style>
+  :root {
+    --bg: #14161a;
+    --panel: #1c1f25;
+    --panel-2: #23262d;
+    --border: #33363d;
+    --text: #e8e9ec;
+    --text-dim: #9a9da5;
+    --accent: #e8823c;
+    --accent-dim: #6b4426;
+    --error: #e26363;
+    --mono: "SF Mono", "Roboto Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    display: flex;
+    justify-content: center;
+    min-height: 100vh;
+  }
+  .app {
+    width: 100%;
+    max-width: 760px;
+    padding: 32px 20px 100px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  header {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 16px;
+  }
+  header .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent);
+    display: inline-block;
+  }
+  h1 { font-size: 18px; font-weight: 600; margin: 0; }
+  .subtitle { color: var(--text-dim); font-size: 13px; }
+
+  .messages { display: flex; flex-direction: column; gap: 16px; }
+
+  .msg-question {
+    align-self: flex-end;
+    background: var(--accent-dim);
+    color: var(--text);
+    padding: 10px 14px;
+    border-radius: 10px 10px 2px 10px;
+    max-width: 80%;
+    font-size: 14px;
+  }
+
+  .msg-answer {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .msg-answer.error { border-color: var(--error); }
+  .answer-text { font-size: 14px; line-height: 1.5; }
+  .answer-text.error { color: var(--error); }
+
+  details.sql-block {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 10px;
+  }
+  details.sql-block summary {
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--text-dim);
+    user-select: none;
+  }
+  details.sql-block pre {
+    margin: 8px 0 4px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--accent);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  table.result {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  table.result th, table.result td {
+    text-align: left;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  table.result th {
+    color: var(--text-dim);
+    font-weight: 500;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .table-wrap { overflow-x: auto; }
+
+  .composer {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    display: flex;
+    justify-content: center;
+    background: linear-gradient(to top, var(--bg) 60%, transparent);
+    padding: 24px 20px 20px;
+  }
+  .composer form {
+    width: 100%;
+    max-width: 760px;
+    display: flex;
+    gap: 8px;
+  }
+  .composer input {
+    flex: 1;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 12px 14px;
+    border-radius: 8px;
+    font-size: 14px;
+  }
+  .composer input:focus { outline: none; border-color: var(--accent); }
+  .composer button {
+    background: var(--accent);
+    color: #1a1200;
+    border: none;
+    padding: 0 20px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .composer button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .empty-state {
+    color: var(--text-dim);
+    font-size: 13px;
+    padding: 24px 0;
+  }
+  .empty-state ul { margin: 10px 0 0; padding-left: 18px; }
+  .empty-state li { margin-bottom: 4px; cursor: pointer; color: var(--accent); }
+  .empty-state li:hover { text-decoration: underline; }
+
+  .loading { color: var(--text-dim); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <span class="dot"></span>
+    <h1>Chat with your NBA data</h1>
+    <span class="subtitle">— ask a question, see the SQL, get the answer</span>
+  </header>
+
+  <div class="messages" id="messages">
+    <div class="empty-state" id="empty-state">
+      Try one of these:
+      <ul id="sample-questions"></ul>
+    </div>
+  </div>
+</div>
+
+<div class="composer">
+  <form id="ask-form">
+    <input id="question-input" type="text" placeholder="e.g. Which team won the most games in the 2015-16 season?" autocomplete="off" />
+    <button id="ask-button" type="submit">Ask</button>
+  </form>
+</div>
+
+<script>
+  // Point this at your running FastAPI backend.
+  const API_BASE = "http://localhost:8000";
+
+  const SAMPLE_QUESTIONS = [
+    "Which team won the most games in the 2015-16 season?",
+    "Who scored the most points in a single game, all-time?",
+    "Show the top 10 players by career total points.",
+    "Compare total rebounds between two players.",
+    "What's the Boston Celtics all-time win-loss record?",
+    "What was the attendance and weather for last year's Finals?"
+  ];
+
+  const messagesEl = document.getElementById("messages");
+  const emptyStateEl = document.getElementById("empty-state");
+  const sampleListEl = document.getElementById("sample-questions");
+  const form = document.getElementById("ask-form");
+  const input = document.getElementById("question-input");
+  const button = document.getElementById("ask-button");
+
+  SAMPLE_QUESTIONS.forEach((q) => {
+    const li = document.createElement("li");
+    li.textContent = q;
+    li.addEventListener("click", () => {
+      input.value = q;
+      form.dispatchEvent(new Event("submit"));
+    });
+    sampleListEl.appendChild(li);
+  });
+
+  function escapeHtml(str) {
+    const div = document.createElement("div");
+    div.textContent = str == null ? "" : String(str);
+    return div.innerHTML;
+  }
+
+  function renderTable(columns, rows) {
+    if (!columns || columns.length === 0 || !rows || rows.length === 0) return "";
+    const head = columns.map((c) => `<th>${escapeHtml(c)}</th>`).join("");
+    const body = rows
+      .map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`)
+      .join("");
+    return `<div class="table-wrap"><table class="result"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+  }
+
+  function addQuestionBubble(question) {
+    const div = document.createElement("div");
+    div.className = "msg-question";
+    div.textContent = question;
+    messagesEl.appendChild(div);
+  }
+
+  function addLoadingBubble() {
+    const div = document.createElement("div");
+    div.className = "msg-answer";
+    div.id = "loading-bubble";
+    div.innerHTML = `<div class="loading">Thinking…</div>`;
+    messagesEl.appendChild(div);
+    return div;
+  }
+
+  function replaceLoadingWithResult(loadingEl, data, errorMessage) {
+    if (errorMessage) {
+      loadingEl.classList.add("error");
+      loadingEl.innerHTML = `<div class="answer-text error">${escapeHtml(errorMessage)}</div>`;
+      return;
+    }
+
+    const sqlBlock = data.sql
+      ? `<details class="sql-block"><summary>Generated SQL</summary><pre>${escapeHtml(data.sql)}</pre></details>`
+      : "";
+    const tableBlock = renderTable(data.columns, data.rows);
+
+    loadingEl.innerHTML = `
+      <div class="answer-text">${escapeHtml(data.answer)}</div>
+      ${sqlBlock}
+      ${tableBlock}
+    `;
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const question = input.value.trim();
+    if (!question) return;
+
+    if (emptyStateEl) emptyStateEl.remove();
+
+    addQuestionBubble(question);
+    const loadingEl = addLoadingBubble();
+    input.value = "";
+    button.disabled = true;
+
+    try {
+      const res = await fetch(`${API_BASE}/ask`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question }),
+      });
+
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        replaceLoadingWithResult(loadingEl, null, errBody.detail || `Request failed (${res.status})`);
+      } else {
+        const data = await res.json();
+        replaceLoadingWithResult(loadingEl, data, null);
+      }
+    } catch (err) {
+      replaceLoadingWithResult(
+        loadingEl,
+        null,
+        `Could not reach the backend at ${API_BASE}. Is it running?`
+      );
+    } finally {
+      button.disabled = false;
+      window.scrollTo(0, document.body.scrollHeight);
+    }
+  });
+</script>
+</body>
+</html>
