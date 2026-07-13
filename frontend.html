@@ -161,6 +161,75 @@
   .empty-state li:hover { text-decoration: underline; }
 
   .loading { color: var(--text-dim); font-size: 13px; }
+
+  .schema-toggle {
+    margin-left: auto;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 12px;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .schema-toggle:hover { color: var(--text); border-color: var(--accent); }
+
+  .schema-panel {
+    display: none;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 4px;
+  }
+  .schema-panel.open { display: block; }
+  .schema-panel-title {
+    font-size: 12px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 10px;
+  }
+  .schema-table {
+    border-top: 1px solid var(--border);
+    padding: 10px 0;
+  }
+  .schema-table:last-child { padding-bottom: 0; }
+  .schema-table-name {
+    font-family: var(--mono);
+    color: var(--accent);
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .schema-table-rowcount {
+    color: var(--text-dim);
+    font-size: 11px;
+    font-weight: 400;
+    margin-left: 6px;
+  }
+  .schema-table-desc {
+    color: var(--text-dim);
+    font-size: 12.5px;
+    margin: 4px 0 6px;
+  }
+  .schema-columns {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .schema-column {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 2px 7px;
+    border-radius: 5px;
+  }
+  .schema-loading, .schema-error {
+    color: var(--text-dim);
+    font-size: 13px;
+  }
 </style>
 </head>
 <body>
@@ -169,7 +238,13 @@
     <span class="dot"></span>
     <h1>Chat with your NBA data</h1>
     <span class="subtitle">— ask a question, see the SQL, get the answer</span>
+    <button class="schema-toggle" id="schema-toggle">Schema</button>
   </header>
+
+  <div class="schema-panel" id="schema-panel">
+    <div class="schema-panel-title">Available tables</div>
+    <div id="schema-content" class="schema-loading">Loading schema…</div>
+  </div>
 
   <div class="messages" id="messages">
     <div class="empty-state" id="empty-state">
@@ -205,6 +280,52 @@
   const form = document.getElementById("ask-form");
   const input = document.getElementById("question-input");
   const button = document.getElementById("ask-button");
+  const schemaToggle = document.getElementById("schema-toggle");
+  const schemaPanel = document.getElementById("schema-panel");
+  const schemaContent = document.getElementById("schema-content");
+
+  let schemaLoaded = false;
+
+  function escapeHtml(str) {
+    const div = document.createElement("div");
+    div.textContent = str == null ? "" : String(str);
+    return div.innerHTML;
+  }
+
+  async function loadSchema() {
+    if (schemaLoaded) return;
+    try {
+      const res = await fetch(`${API_BASE}/schema`);
+      if (!res.ok) throw new Error(`Request failed (${res.status})`);
+      const data = await res.json();
+
+      schemaContent.innerHTML = data.tables
+        .map((t) => {
+          const rowCount = t.row_count != null
+            ? `<span class="schema-table-rowcount">${t.row_count.toLocaleString()} rows</span>`
+            : "";
+          const columns = t.columns
+            .map((c) => `<span class="schema-column">${escapeHtml(c)}</span>`)
+            .join("");
+          return `
+            <div class="schema-table">
+              <div class="schema-table-name">${escapeHtml(t.name)}${rowCount}</div>
+              <div class="schema-table-desc">${escapeHtml(t.description)}</div>
+              <div class="schema-columns">${columns}</div>
+            </div>
+          `;
+        })
+        .join("");
+      schemaLoaded = true;
+    } catch (err) {
+      schemaContent.innerHTML = `<div class="schema-error">Could not load schema. Is the backend running at ${API_BASE}?</div>`;
+    }
+  }
+
+  schemaToggle.addEventListener("click", () => {
+    const isOpen = schemaPanel.classList.toggle("open");
+    if (isOpen) loadSchema();
+  });
 
   SAMPLE_QUESTIONS.forEach((q) => {
     const li = document.createElement("li");
@@ -215,12 +336,6 @@
     });
     sampleListEl.appendChild(li);
   });
-
-  function escapeHtml(str) {
-    const div = document.createElement("div");
-    div.textContent = str == null ? "" : String(str);
-    return div.innerHTML;
-  }
 
   function renderTable(columns, rows) {
     if (!columns || columns.length === 0 || !rows || rows.length === 0) return "";

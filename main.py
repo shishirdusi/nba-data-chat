@@ -1,3 +1,5 @@
+from dotenv import load_dotenv
+load_dotenv()
 """
 FastAPI backend for "Chat with your NBA data".
 
@@ -68,6 +70,60 @@ draft_history(person_id, player_name, season, round_number, round_pick,
 player(id, full_name, is_active)
   -- basic player lookup, NO scoring stats here
 """
+
+# Structured version of the same schema, used only for the /schema endpoint
+# (the UI's schema explorer panel). Kept separate from SCHEMA_CONTEXT above
+# so the prompt text can stay hand-tuned without needing to also be
+# machine-parseable.
+SCHEMA_TABLES = [
+    {
+        "name": "team",
+        "description": "One row per NBA franchise.",
+        "columns": ["id", "full_name", "abbreviation", "nickname", "city", "state", "year_founded"],
+    },
+    {
+        "name": "game",
+        "description": (
+            "One row per game, with team-level box score stats for both the "
+            "home and away side. wl_home/wl_away are 'W' or 'L'. season_type "
+            "distinguishes Regular Season, Playoffs, Pre Season, and All-Star games."
+        ),
+        "columns": [
+            "game_id", "season_id", "season_type", "game_date",
+            "team_id_home", "team_abbreviation_home", "team_name_home",
+            "wl_home", "pts_home", "reb_home", "ast_home", "fg3m_home",
+            "team_id_away", "team_abbreviation_away", "team_name_away",
+            "wl_away", "pts_away", "reb_away", "ast_away", "fg3m_away",
+        ],
+    },
+    {
+        "name": "game_info",
+        "description": "Attendance data. Join to game on game_id.",
+        "columns": ["game_id", "game_date", "attendance"],
+    },
+    {
+        "name": "common_player_info",
+        "description": "Player bio and career info. No scoring stats.",
+        "columns": [
+            "person_id", "first_name", "last_name", "position",
+            "team_id", "team_abbreviation", "draft_year", "season_exp",
+            "from_year", "to_year",
+        ],
+    },
+    {
+        "name": "draft_history",
+        "description": "One row per drafted player.",
+        "columns": [
+            "person_id", "player_name", "season", "round_number",
+            "round_pick", "overall_pick", "team_abbreviation",
+        ],
+    },
+    {
+        "name": "player",
+        "description": "Basic player lookup. No scoring stats.",
+        "columns": ["id", "full_name", "is_active"],
+    },
+]
 
 SYSTEM_PROMPT = f"""You convert natural-language questions about NBA data into a
 single SQLite SELECT query.
@@ -194,7 +250,22 @@ def health():
 
 @app.get("/schema")
 def schema():
-    return {"schema": SCHEMA_CONTEXT.strip()}
+    tables = []
+    try:
+        conn = get_readonly_connection()
+        for t in SCHEMA_TABLES:
+            try:
+                cur = conn.execute(f"SELECT COUNT(*) FROM {t['name']}")
+                row_count = cur.fetchone()[0]
+            except sqlite3.Error:
+                row_count = None
+            tables.append({**t, "row_count": row_count})
+        conn.close()
+    except HTTPException:
+        # DB not found yet — still return the schema shape, just without counts
+        tables = [{**t, "row_count": None} for t in SCHEMA_TABLES]
+
+    return {"tables": tables}
 
 
 @app.post("/ask")
