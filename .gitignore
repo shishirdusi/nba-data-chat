@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 .env
 mock_nba.sqlite
+venv/
